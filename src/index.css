@@ -2092,10 +2092,13 @@ kbd {
 
 /* ── Reparto web móvil ───────────────────────────────────────── */
 .reparto-shell { max-width: 880px; margin: 0 auto; display: grid; gap: 14px; }
-.reparto-mobile-head { display: flex; align-items: center; justify-content: space-between; }
+.reparto-mobile-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .reparto-mobile-head span, .reparto-route-head span { display: block; color: var(--mute); font-size: 11px; font-weight: 600; }
 .reparto-mobile-head h2 { font-size: 20px; color: var(--ink); }
+.reparto-head-actions { display: flex; align-items: center; gap: 8px; }
 .reparto-refresh { width: 38px; height: 38px; border-radius: 50%; background: var(--blue-light); color: var(--blue); font-size: 23px; }
+.reparto-logout { min-height: 38px; padding: 0 11px; border-radius: 9px; border: 1px solid #fecaca; background: #fff7f7; color: var(--red-text); font-size: 12px; font-weight: 800; }
+.reparto-logout:hover { background: #fee2e2; }
 .reparto-progress { background: #fff; border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 12px 14px; box-shadow: var(--shadow-xs); }
 .reparto-progress > div { display: flex; justify-content: space-between; font-size: 12px; }
 .reparto-progress span { color: var(--mute); }
@@ -2165,6 +2168,7 @@ kbd {
   .app-reparto .modal-box { width: 100%; max-width: none !important; max-height: 94dvh; overflow-y: auto; border-radius: 18px 18px 0 0; }
   .app-reparto .modal-hd { position: sticky; top: 0; z-index: 2; background: #fff; }
   .reparto-mobile-head h2 { font-size: 19px; }
+  .reparto-logout span { display: inline; color: inherit; font-size: inherit; }
   .reparto-stop { grid-template-columns: 32px minmax(0,1fr) 15px; padding: 12px; }
   .reparto-status { display: none; }
   .reparto-map-actions { grid-template-columns: 1fr; }

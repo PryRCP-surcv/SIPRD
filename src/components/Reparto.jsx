@@ -1,6 +1,7 @@
 import {useState,useEffect} from 'react'
 import {apiFetch} from '../api/cliente'
 import {useToast} from '../context/ToastContext'
+import {useAuth} from '../context/AuthContext'
 import Modal from './common/Modal'
 
 const MEDIOS=['TRANSFERENCIA','YAPE','PLIN','EFECTIVO','DEPOSITO']
@@ -8,7 +9,7 @@ const etiquetaMedio={TRANSFERENCIA:'Transferencia',YAPE:'Yape',PLIN:'Plin',EFECT
 const estadoTexto=estado=>({ATENDIDA:'Entregado',EN_CAMINO:'En camino',NO_ATENDIDA:'Pendiente'}[estado]||estado)
 
 export default function Reparto(){
- const {toast}=useToast(),[rutas,setRutas]=useState([]),[pedido,setPedido]=useState(null),[form,setForm]=useState({monto:'',medio_pago:'TRANSFERENCIA',numero_operacion:''}),[archivo,setArchivo]=useState(null),[evidencia,setEvidencia]=useState(null),[incidencia,setIncidencia]=useState(''),[ocupado,setOcupado]=useState(false),[corregir,setCorregir]=useState(null)
+ const {toast}=useToast(),{logout}=useAuth(),[rutas,setRutas]=useState([]),[pedido,setPedido]=useState(null),[form,setForm]=useState({monto:'',medio_pago:'TRANSFERENCIA',numero_operacion:''}),[archivo,setArchivo]=useState(null),[evidencia,setEvidencia]=useState(null),[incidencia,setIncidencia]=useState(''),[ocupado,setOcupado]=useState(false),[corregir,setCorregir]=useState(null)
  const cargar=async()=>{try{const rs=await apiFetch('/reparto/mis-rutas');setRutas(rs);if(pedido)setPedido(rs.flatMap(r=>r.paradas).find(p=>p.id===pedido.id)||null)}catch(e){toast.error(e.message)}}
  useEffect(()=>{cargar();const t=setInterval(cargar,15000);return()=>clearInterval(t)},[pedido?.id])
  const abrir=p=>{setPedido(p);setCorregir(null);setForm({monto:'',medio_pago:'TRANSFERENCIA',numero_operacion:''});setArchivo(null);setEvidencia(null);setIncidencia('')}
@@ -19,7 +20,7 @@ export default function Reparto(){
  const registrarIncidencia=async()=>{if(!incidencia.trim())return;setOcupado(true);try{const body=new FormData();body.append('tipo','OTRO');body.append('descripcion',incidencia);await apiFetch(`/reparto/paradas/${pedido.id}/incidencias`,{method:'POST',body});await cargar();toast.success('Incidencia registrada para Distribución.')}catch(e){toast.error(e.message)}finally{setOcupado(false)}}
  const total=rutas.flatMap(r=>r.paradas), atendidos=total.filter(p=>p.estado==='ATENDIDA'||p.cierre_financiero).length
  return <section className="reparto-shell">
-   <div className="reparto-mobile-head"><div><span>Jornada de reparto</span><h2>{rutas[0]?.vehiculo||'Mi ruta'}</h2></div><button className="reparto-refresh" onClick={cargar} aria-label="Actualizar ruta">↻</button></div>
+   <div className="reparto-mobile-head"><div><span>Jornada de reparto</span><h2>{rutas[0]?.vehiculo||'Mi ruta'}</h2></div><div className="reparto-head-actions"><button className="reparto-refresh" onClick={cargar} aria-label="Actualizar ruta" title="Actualizar ruta">↻</button><button className="reparto-logout" onClick={logout} aria-label="Cerrar sesión" title="Cerrar sesión">↪ <span>Salir</span></button></div></div>
    {rutas.length>0&&<div className="reparto-progress"><div><b>{atendidos}/{total.length} entregas</b><span>{total.length?Math.round(atendidos*100/total.length):0}% completado</span></div><i><em style={{width:`${total.length?atendidos*100/total.length:0}%`}}/></i></div>}
    {!rutas.length&&<div className="reparto-empty"><span>🚚</span><b>No hay ruta confirmada para esta placa.</b><p>Solicite a Distribución confirmar la planificación de la jornada.</p></div>}
    {rutas.map(r=><div className="reparto-route" key={r.ruta_id}><div className="reparto-route-head"><div><span>Ruta {r.zona||'operativa'}</span><b>{r.vehiculo}</b></div><small>{r.paradas.length} paradas · {r.duracion_min||0} min estimados</small></div><div className="reparto-stops">{r.paradas.map(p=><button className={`reparto-stop estado-${p.estado?.toLowerCase()}`} key={p.id} onClick={()=>abrir(p)}><span className="reparto-seq">{p.secuencia}</span><span className="reparto-stop-main"><b>{p.cliente}</b><i>{p.direccion}</i><small>S/ {p.importe.toFixed(2)} · {p.porcentaje}% confirmado</small></span><span className={`reparto-status ${p.cierre_financiero?'cerrado':p.estado?.toLowerCase()}`}>{p.cierre_financiero?'Cerrado':estadoTexto(p.estado)}</span><span className="reparto-chevron">›</span></button>)}</div></div>)}
