@@ -17,6 +17,13 @@ export default function Modal({
 }) {
   const modalRef = useRef(null)
   const previousActiveElement = useRef(null)
+  const onCloseRef = useRef(onClose)
+
+  // El callback puede cambiar cuando el formulario dentro del modal se actualiza.
+  // Mantenerlo en una referencia evita reiniciar el foco y cerrar el teclado móvil.
+  useEffect(() => {
+    onCloseRef.current = onClose
+  }, [onClose])
 
   useEffect(() => {
     if (!isOpen) return
@@ -26,7 +33,7 @@ export default function Modal({
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
         e.stopPropagation()
-        onClose?.()
+        onCloseRef.current?.()
         return
       }
 
@@ -80,7 +87,7 @@ export default function Modal({
         previousActiveElement.current.focus()
       }
     }
-  }, [isOpen, onClose])
+  }, [isOpen])
 
   if (!isOpen) return null
 
