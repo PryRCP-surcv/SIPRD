@@ -68,6 +68,7 @@ export default function PortalCliente({ enlace }) {
   const [error, setError] = useState('')
   const [pago, setPago] = useState('')
   const [ocupado, setOcupado] = useState(false)
+  const [checkoutUrl, setCheckoutUrl] = useState('')
 
   useEffect(() => {
     let vigente = true
@@ -98,6 +99,25 @@ export default function PortalCliente({ enlace }) {
     }
   }
 
+  async function checkout(accion) {
+    setOcupado(true)
+    setError('')
+    try {
+      const resultado = await portal(accion, enlace)
+      if (resultado.url) setCheckoutUrl(resultado.url)
+      else {
+        if (resultado.estado !== 'PENDIENTE') setCheckoutUrl('')
+        if (resultado.estado === 'APROBADO') setPago('Pago confirmado por Mercado Pago.')
+        if (resultado.detalle) setPago(resultado.detalle)
+        setPedido(await portal('consulta', enlace))
+      }
+    } catch (error) {
+      setError(error.message)
+    } finally {
+      setOcupado(false)
+    }
+  }
+
   return <main className="reparto-shell" style={{ maxWidth: 560, margin: '24px auto', padding: 16 }}>
     <section className="card" style={{ padding: 20 }}>
       <h2>Seguimiento de pedido</h2>
@@ -117,9 +137,19 @@ export default function PortalCliente({ enlace }) {
           </>}
           <dt>Saldo pendiente de confirmación</dt><dd>{soles(pedido.saldo)}</dd>
         </dl>
-        {pedido.saldo > 0 && !pedido.pago_demo && <p>Pago digital pendiente de habilitación.</p>}
-        {pedido.pago_demo && <p>Modo demostración. No procesa dinero.</p>}
+        {pedido.saldo > 0 && !pedido.pago_demo && !pedido.pago_digital && <p>Pago digital pendiente de habilitación.</p>}
+        {pedido.pago_demo && !pedido.pago_digital && <p>Modo demostración. No procesa dinero.</p>}
         {pedido.puede_pagar && <button className="reparto-primary" disabled={ocupado} onClick={simular}>Simular pago</button>}
+        {pedido.pago_digital && <>
+          {pedido.pago_digital_pruebas && <p>Checkout de pruebas de Mercado Pago.</p>}
+          {pedido.detalle_pago_digital && <p>{pedido.detalle_pago_digital}</p>}
+          {pedido.puede_checkout && (checkoutUrl
+            ? <p><a href={checkoutUrl} target="_blank" rel="noreferrer">Abrir Mercado Pago</a></p>
+            : <button className="reparto-primary" disabled={ocupado}
+                onClick={() => checkout('checkout')}>Preparar pago digital</button>)}
+          {pedido.estado_pago_digital && <button className="reparto-secondary" disabled={ocupado}
+            onClick={() => checkout('estado-checkout')}>Consultar confirmación del pago</button>}
+        </>}
         {pago && <p role="status">{pago}</p>}
       </>}
     </section>

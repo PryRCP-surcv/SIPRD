@@ -117,7 +117,7 @@ async def salud():
     }
 
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from backend.app.models import Usuario
 
 
@@ -126,6 +126,7 @@ async def listo():
     try:
         async with AsyncSessionLocal() as session:
             await session.execute(select(Usuario).limit(1))
+            await session.execute(text("SELECT 1 FROM siprd.pagos_digitales LIMIT 1"))
         return {"estado": "LISTO", "bd": "CONECTADA"}
     except Exception:
         return JSONResponse(
@@ -152,6 +153,11 @@ app.include_router(liquidaciones_router, prefix="/api/v1")
 app.include_router(portal_router, prefix="/api/v1")
 app.include_router(auditoria_router, prefix="/api/v1")
 app.include_router(accesos_router, prefix="/api/v1")
+
+if settings.FRONTEND_DIST:
+    from starlette.staticfiles import StaticFiles
+
+    app.mount("/", StaticFiles(directory=settings.FRONTEND_DIST, html=True), name="frontend")
 
 if __name__ == "__main__":
     import uvicorn

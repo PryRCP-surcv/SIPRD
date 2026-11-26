@@ -20,7 +20,8 @@ export function planUI(sol, vehiculos=[], pedidos=[], n=0) {
       const pedido=pedidoUI(p)
       return {...pedido,...s, id:s.id ?? s.pedido_id, id_parada:s.id, codigo:s.codigo || p.codigo_externo,
         orden:j+1, ruta:r.id ?? r.ruta_id, zona:r.zona || r.zona_operativa,
-        estado:s.estado==='ATENDIDA' ? 'entregado' : s.estado==='EN_CAMINO' ? 'en_camino' : s.estado==='NO_ATENDIDA' ? 'no_atendida' : 'pendiente',
+        estado:({ATENDIDA:'entregado', EN_CAMINO:'en_camino', NO_ATENDIDA:'no_atendida',
+          CANCELADA:'cancelada'})[s.estado] || 'pendiente',
         bloqueado:!!s.bloqueada, monto:s.importe ?? pedido.monto,
         cliente:s.cliente || s.nombre_cliente || pedido.cliente, dir:s.direccion || pedido.dir,
         eta:s.eta ? new Date(s.eta).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit',hour12:false}) : s.inicio_atencion,

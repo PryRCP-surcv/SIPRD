@@ -6,6 +6,7 @@ import { useAudit } from '../context/AuditContext'
 import { useToast } from '../context/ToastContext'
 import Modal from './common/Modal'
 import LiquidacionEfectivo from './LiquidacionEfectivo'
+import PagosDigitales from './PagosDigitales'
 
 /**
  * Módulo Cobranzas — Validación de pagos.
@@ -168,7 +169,7 @@ export default function Cobranzas() {
           </div>
 
           {/* Comprobante */}
-          {cobroSeleccionado.tipo !== 'efectivo' && !cobroSeleccionado.simulado && (
+          {cobroSeleccionado.tipo !== 'efectivo' && !cobroSeleccionado.simulado && !cobroSeleccionado.integrado && (
             <div style={{ borderRadius: 8, border: '1px dashed #cbd5e1', padding: '16px', textAlign: 'center', background: '#fbfcfd' }}>
               {cobroSeleccionado.comprobante ? (
                 <div>
@@ -188,6 +189,7 @@ export default function Cobranzas() {
           )}
 
           {cobroSeleccionado.simulado && <p>Pago simulado · {cobroSeleccionado.numero_operacion}</p>}
+          {cobroSeleccionado.integrado && <p>Operación integrada · {cobroSeleccionado.numero_operacion}</p>}
           {cobroSeleccionado.tipo === 'efectivo' && (
             <div style={{ background: '#f0fdf4', borderRadius: 8, padding: '12px 14px', fontSize: 12, color: '#15803d', border: '1px solid #bbf7d0' }}>
               💵 <strong>Pago en efectivo recibido por el repartidor.</strong> No requiere comprobante bancario. Se concilia contra caja al retorno del vehículo.
@@ -294,6 +296,8 @@ export default function Cobranzas() {
 
         <LiquidacionEfectivo key={operacion.fecha} fecha={operacion.fecha} cobros={cobros}
           onGuardar={operacion.refresh} puedeGuardar={puede('validar_cobros')} />
+        <PagosDigitales key={'pasarela-' + operacion.fecha} fecha={operacion.fecha}
+          onCambio={operacion.refresh} puedeValidar={puede('validar_cobros')} />
         {/* Cola de cobros */}
         <div className="card">
           <div className="ch">

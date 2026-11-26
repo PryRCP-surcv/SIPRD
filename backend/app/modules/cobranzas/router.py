@@ -52,7 +52,7 @@ def datos(req):
         raise ErrorReglaNegocio(
             "OPERACION_REQUERIDA", "Indique el número de operación."
         )
-    if (req.numero_operacion or "").upper().strip().startswith("SIPRD-DEMO-"):
+    if (req.numero_operacion or "").upper().strip().startswith(("SIPRD-DEMO-", "SIPRD-MP-")):
         raise ErrorReglaNegocio("OPERACION_INVALIDA", "La referencia está reservada.")
     return medio
 
@@ -69,7 +69,7 @@ async def editable(db, c, usuario):
         .one()
     )
     await db.refresh(c)
-    if p.cierre_financiero or c.estado == "CONFORME":
+    if p.cierre_financiero or c.estado == "CONFORME" or (c.numero_operacion or "").startswith("SIPRD-MP-"):
         raise ErrorReglaNegocio(
             "COBRO_NO_EDITABLE", "El cobro ya fue confirmado o el pedido está cerrado."
         )
@@ -238,7 +238,8 @@ async def listar(
             "importe_pedido": float(p.importe_total),
             "medio_pago": c.medio_pago,
             "numero_operacion": c.numero_operacion,
-            "simulado": (c.numero_operacion or "").startswith("SIPRD-DEMO-"),
+            "simulado": (c.numero_operacion or "").startswith(("SIPRD-DEMO-", "SIPRD-MP-PRUEBA-")),
+            "integrado": (c.numero_operacion or "").startswith("SIPRD-MP-"),
             "estado": c.estado,
             "observacion": c.observacion,
             "tiene_comprobante": bool(c.url_comprobante),
@@ -353,8 +354,8 @@ async def contrastar(
         .one()
     )
     await db.refresh(c)
-    if (c.numero_operacion or "").startswith("SIPRD-DEMO-"):
-        raise ErrorReglaNegocio("COBRO_SIMULADO", "El resultado del pago simulado no se modifica manualmente.")
+    if (c.numero_operacion or "").startswith(("SIPRD-DEMO-", "SIPRD-MP-")):
+        raise ErrorReglaNegocio("COBRO_DIGITAL", "Los resultados de pagos digitales integrados se actualizan desde la pasarela.")
     if c.medio_pago == "EFECTIVO":
         await validar_caja_abierta(db, s, c.id_usuario_registro)
     if p.cierre_financiero:

@@ -65,9 +65,39 @@ export default function Rutas() {
   const [guardado, setGuardado]     = useState(false)
   const [filtroEstado, setFiltroEstado] = useState('todos') // 'todos' | 'pendiente' | 'en_camino' | 'entregado'
   const [evidencias, setEvidencias] = useState(null)
+  const [traslado, setTraslado] = useState(null)
 
   useEffect(()=>{setRutas(RUTAS_ACTIVAS);setRutaActiva(prev=>RUTAS_ACTIVAS.some(r=>r.id===prev)?prev:RUTAS_ACTIVAS[0]?.id)},[operacion.plan,operacion.pedidos,operacion.vehiculos])
   const ruta = rutas.find(r => r.id === rutaActiva) ?? rutas[0]
+  const destinos = traslado ? rutas.filter(r =>
+    r.id !== traslado.origen && r.zona === traslado.zona && r.estado !== 'CANCELADA') : []
+  const destino = destinos.find(r => String(r.id) === traslado?.destino)
+
+  async function reasignar(evento) {
+    evento.preventDefault()
+    if (ocupado || !destino || operacion.plan?.id !== traslado.plan) return
+    setOcupado(true)
+    try {
+      const plan = await apiFetch(`/planificaciones/${traslado.plan}/paradas/${traslado.parada}/reasignacion`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          ruta_origen_id: traslado.origen,
+          ruta_destino_id: destino.id,
+          posicion: traslado.posicion,
+        }),
+      })
+      if (plan.fecha === operacion.fecha) {
+        operacion.setPlan(plan)
+        setRutaActiva(destino.id)
+      }
+      setTraslado(null)
+      toast.success('Pedido reasignado. Ambas rutas fueron recalculadas.')
+    } catch (error) {
+      toast.error(error.message)
+    } finally {
+      setOcupado(false)
+    }
+  }
 
   const persistir=async(nuevas)=>{
     if(ocupado)return
@@ -83,7 +113,7 @@ export default function Rutas() {
     const pos=ruta.paradas.findIndex(p=>p.id===id),dest=pos+delta
     if(dest<0||dest>=ruta.paradas.length)return
     const fijo=p=>p.bloqueado||['entregado','en_camino'].includes(p.estado)
-    if(fijo(ruta.paradas[pos])||fijo(ruta.paradas[dest])){toast.warning('No se pueden mover paradas atendidas, en camino o bloqueadas.');return}
+    if(pos<0 || fijo(ruta.paradas[pos])||fijo(ruta.paradas[dest])){toast.warning('No se pueden mover paradas atendidas, en camino o bloqueadas.');return}
     const ps=[...ruta.paradas];[ps[pos],ps[dest]]=[ps[dest],ps[pos]]
     persistir(rutas.map(r=>r.id===ruta.id?{...r,paradas:ps.map((p,i)=>({...p,orden:i+1,secuencia:i+1}))}:r))
   }
@@ -136,6 +166,37 @@ export default function Rutas() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+
+      {traslado && operacion.plan?.id === traslado.plan &&
+        <Modal isOpen title="Reasignar pedido" subtitle={traslado.cliente}
+          onClose={() => !ocupado && setTraslado(null)}>
+          <form onSubmit={reasignar} style={{ display: 'grid', gap: 12 }}>
+            <label>Vehículo de destino{' '}
+              <select required value={traslado.destino} disabled={ocupado} onChange={e => {
+                const id = e.target.value
+                const nuevo = destinos.find(r => String(r.id) === id)
+                setTraslado({ ...traslado, destino: id, posicion: (nuevo?.paradas.length ?? 0) + 1 })
+              }}>
+                <option value="">Seleccionar vehículo de la misma zona</option>
+                {destinos.map(r => <option key={r.id} value={r.id}>
+                  {r.vehiculo.placa} · {r.paradas.length} paradas
+                </option>)}
+              </select>
+            </label>
+            {destino && <label>Posición en la ruta{' '}
+              <select value={traslado.posicion} disabled={ocupado} onChange={e =>
+                setTraslado({ ...traslado, posicion: Number(e.target.value) })}>
+                {destino.paradas.map((p, i) => <option key={p.id} value={i + 1}>
+                  {i + 1} · Antes de {p.cliente}
+                </option>)}
+                <option value={destino.paradas.length + 1}>Al final de la ruta</option>
+              </select>
+            </label>}
+            <button className="btn blue" disabled={!destino || ocupado}>
+              {ocupado ? 'Verificando rutas…' : 'Guardar reasignación'}
+            </button>
+          </form>
+        </Modal>}
 
       {evidencias&&<Modal isOpen title="Evidencias de entrega" subtitle={`${evidencias.parada.cliente} · Parada ${evidencias.parada.orden}`} onClose={cerrarEvidencias} maxWidth={760}>
         {evidencias.archivos.length===0?<p>No hay fotografías registradas para esta entrega.</p>:<div className="evidencias-grid">{evidencias.archivos.map(e=><figure key={e.id} className="evidencia-item">{e.tipo?.startsWith('image/')?<img src={e.url} alt={`Evidencia de entrega: ${e.nombre}`}/>:<a href={e.url} target="_blank" rel="noreferrer">Abrir archivo adjunto</a>}<figcaption>{e.nombre}</figcaption></figure>)}</div>}
@@ -267,7 +328,9 @@ export default function Rutas() {
             <tbody>
               {paradasVisibles.map((p) => {
                 const bloq = p.bloqueado
-                const inmutable = ocupado || p.estado === 'entregado' || p.estado === 'en_camino'
+                const inmutable = ocupado || ['entregado','en_camino','cancelada'].includes(p.estado)
+                const tieneDestino = rutas.some(r =>
+                  r.id !== ruta.id && r.zona === ruta.zona && r.estado !== 'CANCELADA')
                 const realIdx = ruta.paradas.findIndex(item => item.id === p.id)
                 const canSubir = realIdx > 0 && ruta.paradas[realIdx - 1]?.estado !== 'entregado'
                 const canBajar = realIdx >= 0 && realIdx < ruta.paradas.length - 1 && ruta.paradas[realIdx + 1]?.estado !== 'entregado'
@@ -295,7 +358,7 @@ export default function Rutas() {
                             type="button"
                             title={canSubir ? `Mover parada de ${p.cliente} hacia arriba` : 'No se puede subir más'}
                             aria-label={`Subir parada de ${p.cliente}`}
-                            disabled={!canSubir}
+                            disabled={!canSubir || bloq}
                             onClick={() => subir(p.id)}
                             style={{
                               width: 28, height: 28, borderRadius: 6,
@@ -309,7 +372,7 @@ export default function Rutas() {
                             type="button"
                             title={canBajar ? `Mover parada de ${p.cliente} hacia abajo` : 'No se puede bajar más'}
                             aria-label={`Bajar parada de ${p.cliente}`}
-                            disabled={!canBajar}
+                            disabled={!canBajar || bloq}
                             onClick={() => bajar(p.id)}
                             style={{
                               width: 28, height: 28, borderRadius: 6,
@@ -335,6 +398,12 @@ export default function Rutas() {
                           </button>
                         </div>
                       )}
+                      {!inmutable && !bloq && tieneDestino && <button type="button"
+                        className="btn out" style={{fontSize:11, marginTop:6}}
+                        onClick={() => setTraslado({
+                          plan: operacion.plan.id, parada: p.id, cliente: p.cliente,
+                          origen: ruta.id, zona: ruta.zona, destino: '', posicion: 1,
+                        })}>Cambiar vehículo</button>}
                       {inmutable && (
                         <button className="btn out" style={{fontSize:11,padding:'5px 8px'}} onClick={()=>abrirEvidencias(p)}>📷 Evidencias</button>
                       )}

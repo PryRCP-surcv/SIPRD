@@ -1,6 +1,6 @@
 from pydantic_settings import BaseSettings
 from pydantic import Field, field_validator
-from typing import List
+from typing import List, Literal
 import os
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -11,6 +11,11 @@ class Settings(BaseSettings):
     ENTORNO: str = "desarrollo"
     DEBUG: bool = True
     PAGOS_DEMO: bool = False
+    MP_MODO: Literal["deshabilitado", "pruebas", "real"] = "deshabilitado"
+    MP_ACCESS_TOKEN: str = ""
+    MP_USUARIO_ID: str = ""
+    MP_WEBHOOK_SECRET: str = ""
+    FRONTEND_DIST: str = ""
 
     # Configuración PostgreSQL formal (siprd_db)
     POSTGRES_USER: str = os.getenv("POSTGRES_USER", "postgres")

@@ -1,11 +1,12 @@
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 import secrets
+from uuid import UUID, uuid4
 
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from backend.app.core.auditoria import registrar_auditoria
 from backend.app.core.config import settings
@@ -14,7 +15,8 @@ from backend.app.core.reparto import autorizar_parada
 from backend.app.core.seguridad import decodificar_token, require_roles
 from backend.app.core.tiempo import ahora
 from backend.app.models import Cobro, ParadaRuta, Pedido, Planificacion, Ruta
-from backend.app.modules.cobranzas.saldos import total_pedido
+from backend.app.modules.cobranzas.saldos import total_pedido, pago_digital_vigente
+from backend.app.modules.portal import mercadopago as mp
 
 router = APIRouter(prefix="/portal", tags=["Portal del cliente"])
 
@@ -76,14 +78,118 @@ async def consultar(req: Acceso, response: Response, db=Depends(get_db)):
     confirmado = await total_pedido(db, pedido.id_pedido, ("CONFORME",))
     reservado = await total_pedido(db, pedido.id_pedido, ("PENDIENTE", "CONFORME"))
     saldo = max(Decimal(0), pedido.importe_total - confirmado)
+    digital = await pago_digital_vigente(db, pedido.id_pedido)
     return {
         "pedido": pedido.codigo_externo, "estado": parada.estado,
         "fecha": plan.fecha_operacion, "llegada_estimada": parada.eta_estimada,
         "estimacion_actualizada": plan.fecha_confirmacion, "saldo": saldo,
         "pago_demo": demo_habilitada(pedido),
+        "pago_digital": mp.habilitado(pedido),
+        "pago_digital_pruebas": mp.habilitado(pedido) and settings.MP_MODO == "pruebas",
+        "estado_pago_digital": digital["estado"] if digital else None,
+        "detalle_pago_digital": digital["detalle"] if digital else None,
+        "puede_checkout": mp.habilitado(pedido) and saldo > 0
+        and reservado == confirmado and not pedido.cierre_financiero
+        and (not digital or digital["estado"] != "OBSERVADO"),
         "puede_pagar": demo_habilitada(pedido) and saldo > 0
-        and reservado == confirmado and not pedido.cierre_financiero,
+        and reservado == confirmado and not pedido.cierre_financiero and not digital
+        and not mp.habilitado(pedido),
     }
+
+
+@router.post("/checkout")
+async def iniciar_checkout(req: Acceso, response: Response, db=Depends(get_db)):
+    datos = credencial(req, response)
+    pedido = await db.scalar(select(Pedido).where(
+        Pedido.id_pedido == datos["pedido"]
+    ).with_for_update())
+    parada, _, _ = await contexto(db, datos["parada"])
+    if not pedido or parada.id_pedido != pedido.id_pedido or not mp.habilitado(pedido):
+        raise HTTPException(404, "Pago digital no habilitado para este pedido.")
+    pago = await pago_digital_vigente(db, pedido.id_pedido)
+    if pago and (pago["modo"] != settings.MP_MODO or pago["estado"] == "OBSERVADO"):
+        raise HTTPException(409, "Tesorería debe revisar la orden existente.")
+    if not pago:
+        confirmado = await total_pedido(db, pedido.id_pedido, ("CONFORME",))
+        reservado = await total_pedido(db, pedido.id_pedido, ("PENDIENTE", "CONFORME"))
+        saldo = pedido.importe_total - confirmado
+        if pedido.cierre_financiero or saldo <= 0 or reservado != confirmado:
+            raise HTTPException(409, "No hay saldo disponible para iniciar un pago digital.")
+        ref = uuid4()
+        await db.execute(text("""
+            INSERT INTO siprd.pagos_digitales
+              (referencia, pedido_id, parada_id, emisor_id, modo, importe, estado)
+            VALUES (:ref, :pedido, :parada, :emisor, :modo, :importe, 'CREANDO')
+        """), dict(ref=ref, pedido=pedido.id_pedido, parada=parada.id_parada, emisor=datos["emisor"],
+                   modo=settings.MP_MODO, importe=saldo))
+        pago = await mp.pago_por_referencia(db, ref)
+    if pago["enlace_checkout"]:
+        return {"url": pago["enlace_checkout"]}
+    # Conservar la misma referencia aunque se interrumpa la llamada al proveedor.
+    await db.commit()
+    orden, url = await mp.crear_orden(pago)
+    await db.execute(text("""
+        UPDATE siprd.pagos_digitales SET orden_proveedor = :orden, enlace_checkout = :url,
+            estado = 'PENDIENTE', actualizado = now()
+        WHERE referencia = :ref AND estado = 'CREANDO'
+    """), dict(orden=orden, url=url, ref=pago["referencia"]))
+    return {"url": url}
+
+
+@router.post("/estado-checkout")
+async def estado_checkout(req: Acceso, response: Response, db=Depends(get_db)):
+    datos = credencial(req, response)
+    parada, pedido, _ = await contexto(db, datos["parada"])
+    if pedido.id_pedido != datos["pedido"] or not mp.habilitado(pedido):
+        raise HTTPException(404, "Pago digital no habilitado.")
+    pago = await pago_digital_vigente(db, pedido.id_pedido)
+    if not pago or not pago["orden_proveedor"]:
+        return {"estado": pago["estado"] if pago else None}
+    return await mp.sincronizar(db, pago)
+
+
+@router.post("/notificaciones/mercadopago")
+async def notificar(request: Request, db=Depends(get_db)):
+    if not mp.configurado():
+        raise HTTPException(404, "Pago digital no habilitado.")
+    orden = request.query_params.get("data.id")
+    if request.query_params.get("type") != "order" or not mp.firma_valida(
+        orden, request.headers.get("x-signature"), request.headers.get("x-request-id")
+    ):
+        raise HTTPException(401, "Notificación no autenticada.")
+    pago = (await db.execute(text("""
+        SELECT * FROM siprd.pagos_digitales WHERE orden_proveedor = :orden AND modo = :modo
+    """), {"orden": orden.upper(), "modo": settings.MP_MODO})).mappings().one_or_none()
+    if pago:
+        await mp.sincronizar(db, pago, aviso=True)
+    return {"recibido": True}
+
+
+@router.get("/tesoreria")
+async def operaciones_digitales(fecha: date, db=Depends(get_db),
+                                usuario=Depends(require_roles(["TESORERIA"]))):
+    filas = (await db.execute(text("""
+        SELECT d.referencia, d.orden_proveedor, d.estado, d.estado_proveedor,
+               d.importe, d.modo, d.detalle, d.actualizado, p.codigo_externo AS pedido
+        FROM siprd.pagos_digitales d
+        JOIN siprd.pedidos p ON p.id_pedido = d.pedido_id
+        JOIN siprd.paradas_ruta s ON s.id_parada = d.parada_id
+        JOIN siprd.rutas r ON r.id_ruta = s.id_ruta
+        JOIN siprd.planificaciones pl ON pl.id_planificacion = r.id_planificacion
+        WHERE pl.fecha_operacion = :fecha ORDER BY d.creado DESC
+    """), {"fecha": fecha})).mappings().all()
+    return [dict(fila) for fila in filas]
+
+
+@router.post("/tesoreria/{referencia}/sincronizar")
+async def sincronizar_pago(referencia: UUID, db=Depends(get_db),
+                          usuario=Depends(require_roles(["TESORERIA"]))):
+    if not mp.configurado():
+        raise HTTPException(409, "La conexión con el proveedor aún no está configurada.")
+    pago = await mp.pago_por_referencia(db, referencia)
+    if not pago:
+        raise HTTPException(404, "Orden de pago no encontrada.")
+    return await mp.sincronizar(db, pago)
 
 
 @router.post("/pago-demo")
@@ -95,6 +201,8 @@ async def pagar_demo(req: Acceso, response: Response, db=Depends(get_db)):
     parada, _, _ = await contexto(db, datos["parada"])
     if not pedido or parada.id_pedido != pedido.id_pedido or not demo_habilitada(pedido):
         raise HTTPException(404, "Demostración de pago no habilitada.")
+    if mp.habilitado(pedido):
+        raise HTTPException(409, "Utilice el checkout de pruebas configurado.")
     referencia = f"SIPRD-DEMO-{pedido.id_pedido}"
     anterior = await db.scalar(
         select(Cobro.id_cobro).join(ParadaRuta)
@@ -102,6 +210,8 @@ async def pagar_demo(req: Acceso, response: Response, db=Depends(get_db)):
     )
     if anterior:
         return {"referencia": referencia, "simulado": True}
+    if await pago_digital_vigente(db, pedido.id_pedido):
+        raise HTTPException(409, "Hay una operación digital pendiente de revisión.")
     confirmado = await total_pedido(db, pedido.id_pedido, ("CONFORME",))
     reservado = await total_pedido(db, pedido.id_pedido, ("PENDIENTE", "CONFORME"))
     saldo = pedido.importe_total - confirmado

@@ -61,6 +61,12 @@ class Ajustar(BaseModel):
     rutas: list[Grupo]
 
 
+class Reasignar(BaseModel):
+    ruta_origen_id: int
+    ruta_destino_id: int
+    posicion: int = Field(ge=1)
+
+
 class Bloquear(BaseModel):
     bloqueada: bool
 
@@ -404,6 +410,34 @@ async def actualizar_distribucion(
     return await ajustar(plan_id, req, db, usuario)
 
 
+@router.put("/{plan_id}/paradas/{parada_id}/reasignacion")
+async def reasignar_parada(plan_id: int, parada_id: int, req: Reasignar,
+                          db=Depends(get_db), usuario=Depends(auth)):
+    await db.execute(text("SELECT pg_advisory_xact_lock(640014)"))
+    rutas = (await db.scalars(select(Ruta).where(Ruta.id_planificacion == plan_id))).all()
+    grupos = {r.id_ruta: [] for r in rutas}
+    if req.ruta_origen_id == req.ruta_destino_id or req.ruta_destino_id not in grupos:
+        raise ErrorReglaNegocio("DESTINO_INVALIDO", "Seleccione otro vehículo de la planificación.")
+    paradas = (await db.scalars(
+        select(ParadaRuta).where(ParadaRuta.id_ruta.in_(grupos))
+        .order_by(ParadaRuta.id_ruta, ParadaRuta.secuencia)
+        .with_for_update()
+    )).all()
+    for parada in paradas:
+        grupos[parada.id_ruta].append(parada.id_parada)
+    origen = grupos.get(req.ruta_origen_id, [])
+    if parada_id not in origen:
+        raise ErrorReglaNegocio("RUTA_ACTUALIZADA", "La parada cambió de ruta. Actualice la pantalla.")
+    destino = grupos[req.ruta_destino_id]
+    if req.posicion > len(destino) + 1:
+        raise ErrorReglaNegocio("POSICION_INVALIDA", "La posición ya no está disponible. Actualice la pantalla.")
+    origen.remove(parada_id)
+    destino.insert(req.posicion - 1, parada_id)
+    return await ajustar(plan_id, Ajustar(rutas=[
+        Grupo(id_ruta=id_, parada_ids=paradas) for id_, paradas in grupos.items()
+    ]), db, usuario)
+
+
 async def ajustar(plan_id, req, db, usuario, confirmando=False):
     await db.execute(text("SELECT pg_advisory_xact_lock(640014)"))
     plan = await db.get(Planificacion, plan_id)
@@ -422,6 +456,7 @@ async def ajustar(plan_id, req, db, usuario, confirmando=False):
                 select(ParadaRuta)
                 .join(Ruta, ParadaRuta.id_ruta == Ruta.id_ruta)
                 .where(Ruta.id_planificacion == plan_id)
+                    .with_for_update(of=ParadaRuta)
             )
         )
         .scalars()
@@ -459,7 +494,7 @@ async def ajustar(plan_id, req, db, usuario, confirmando=False):
     for r in rutas:
         for index, sid in enumerate(grupos[r.id_ruta], 1):
             s = by_id[sid]
-            if (s.bloqueada_manual or s.estado in ("ATENDIDA", "EN_CAMINO")) and (
+            if (s.bloqueada_manual or s.estado in ("ATENDIDA", "EN_CAMINO", "CANCELADA")) and (
                 s.id_ruta != r.id_ruta or s.secuencia != index
             ):
                 raise ErrorReglaNegocio(
@@ -546,6 +581,7 @@ async def bloqueo(
     db=Depends(get_db),
     usuario=Depends(auth),
 ):
+    await db.execute(text("SELECT pg_advisory_xact_lock(640014)"))
     s = await db.get(ParadaRuta, parada_id)
     r = await db.get(Ruta, s.id_ruta) if s else None
     if not r or r.id_planificacion != plan_id:
