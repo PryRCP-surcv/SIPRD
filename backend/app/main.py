@@ -22,6 +22,8 @@ from backend.app.modules.planificacion.router import router as planificacion_rou
 from backend.app.modules.reparto.router import router as reparto_router
 from backend.app.modules.incidencias.router import router as incidencias_router
 from backend.app.modules.cobranzas.router import router as cobranzas_router
+from backend.app.modules.cobranzas.liquidaciones import router as liquidaciones_router
+from backend.app.modules.portal.router import router as portal_router
 from backend.app.modules.auditoria.router import router as auditoria_router
 from backend.app.modules.reparto.accesos import router as accesos_router
 
@@ -146,6 +148,8 @@ app.include_router(planificacion_router, prefix="/api/v1")
 app.include_router(reparto_router, prefix="/api/v1")
 app.include_router(incidencias_router, prefix="/api/v1")
 app.include_router(cobranzas_router, prefix="/api/v1")
+app.include_router(liquidaciones_router, prefix="/api/v1")
+app.include_router(portal_router, prefix="/api/v1")
 app.include_router(auditoria_router, prefix="/api/v1")
 app.include_router(accesos_router, prefix="/api/v1")
 

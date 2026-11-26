@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     VERSION: str = "0.2.0"
     ENTORNO: str = "desarrollo"
     DEBUG: bool = True
+    PAGOS_DEMO: bool = False
 
     # Configuración PostgreSQL formal (siprd_db)
     POSTGRES_USER: str = os.getenv("POSTGRES_USER", "postgres")

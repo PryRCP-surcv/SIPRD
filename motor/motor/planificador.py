@@ -46,9 +46,12 @@ def optimizar_vrp(instancia: InstanciaVRP, metodo: str = "HIBRIDO") -> SolucionV
     if (
         instancia.matriz_distancias is not None
         and instancia.matriz_tiempos is not None
-        and len(pedidos_aptos) == len(instancia.pedidos)
     ):
-        mat_dist, mat_tiempo = instancia.matriz_distancias, instancia.matriz_tiempos
+        # Conservar las distancias viales aunque el prefiltro retire pedidos.
+        originales = {p.id: i + 1 for i, p in enumerate(instancia.pedidos)}
+        indices = [0] + [originales[p.id] for p in pedidos_aptos]
+        mat_dist = [[instancia.matriz_distancias[i][j] for j in indices] for i in indices]
+        mat_tiempo = [[instancia.matriz_tiempos[i][j] for j in indices] for i in indices]
     else:
         mat_dist, mat_tiempo = matriz_distancias_tiempos(
             todos_puntos, instancia.velocidad_kmh
@@ -62,6 +65,7 @@ def optimizar_vrp(instancia: InstanciaVRP, metodo: str = "HIBRIDO") -> SolucionV
         mat_dist,
         mat_tiempo,
         mapa_indices,
+        instancia.criterio,
     )
 
     todos_no_asignados = no_asignados_prefiltro + no_asignados_capacidad

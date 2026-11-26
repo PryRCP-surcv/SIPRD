@@ -578,37 +578,32 @@ async def confirmar(plan_id: int, db=Depends(get_db), usuario=Depends(auth)):
             if s.estado not in ("ATENDIDA", "CANCELADA", "EN_CAMINO"):
                 s.estado = "CANCELADA"
     await db.flush()
+    paradas = (await db.execute(
+        select(ParadaRuta).where(ParadaRuta.id_ruta.in_([r.id_ruta for r in rutas]))
+    )).scalars().all()
+    pedido_ids = {s.id_pedido for s in paradas}
+    pedidos = (await db.execute(
+        select(Pedido).where(Pedido.id_pedido.in_(pedido_ids))
+    )).scalars().all()
+    otra_asignacion = (await db.execute(
+        select(ParadaRuta.id_pedido)
+        .join(Ruta, ParadaRuta.id_ruta == Ruta.id_ruta)
+        .join(Planificacion, Ruta.id_planificacion == Planificacion.id_planificacion)
+        .where(
+            ParadaRuta.id_pedido.in_(pedido_ids),
+            Planificacion.estado == "CONFIRMADA",
+            Planificacion.id_planificacion != plan_id,
+            ParadaRuta.estado != "CANCELADA",
+        ).limit(1)
+    )).first()
+    if otra_asignacion:
+        raise ErrorReglaNegocio(
+            "PEDIDO_YA_ASIGNADO",
+            "Un pedido ya figura en una planificación confirmada.",
+        )
+    for ped in pedidos:
+        ped.estado = "PLANIFICADO"
     for r in rutas:
-        for s in (
-            await db.execute(select(ParadaRuta).where(ParadaRuta.id_ruta == r.id_ruta))
-        ).scalars():
-            ped = await db.get(Pedido, s.id_pedido)
-            other = (
-                (
-                    await db.execute(
-                        select(ParadaRuta)
-                        .join(Ruta, ParadaRuta.id_ruta == Ruta.id_ruta)
-                        .join(
-                            Planificacion,
-                            Ruta.id_planificacion == Planificacion.id_planificacion,
-                        )
-                        .where(
-                            ParadaRuta.id_pedido == ped.id_pedido,
-                            Planificacion.estado == "CONFIRMADA",
-                            Planificacion.id_planificacion != plan_id,
-                            ParadaRuta.estado != "CANCELADA",
-                        )
-                    )
-                )
-                .scalars()
-                .first()
-            )
-            if other:
-                raise ErrorReglaNegocio(
-                    "PEDIDO_YA_ASIGNADO",
-                    "Un pedido ya figura en una planificación confirmada.",
-                )
-            ped.estado = "PLANIFICADO"
         r.estado = "CONFIRMADA"
     p.estado = "CONFIRMADA"
     p.id_usuario_confirmador = int(usuario["sub"])

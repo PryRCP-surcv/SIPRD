@@ -13,7 +13,7 @@ def optimizar_2opt(
     criterio: str = "distancia",
 ) -> List[Punto]:
     """Aplica 2-opt intra-ruta para desenredar cruces y minimizar distancia."""
-    if len(pedidos) < 4:
+    if len(pedidos) < 2:
         return pedidos
 
     mejor_secuencia = list(pedidos)

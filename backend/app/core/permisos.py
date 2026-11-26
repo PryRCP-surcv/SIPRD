@@ -84,6 +84,10 @@ def permiso_peticion(path, method, rol):
         if path.endswith("/importaciones"):
             return "algoritmo"
         return "cerrar_pedidos" if path.endswith("/cerrar") else "pedidos"
+    if "/liquidaciones" in path:
+        return "cobranzas" if method == "GET" else "validar_cobros"
+    if "/portal/enlaces/" in path:
+        return "reparto"
     if "/cobros" in path:
         if path.endswith("/exportacion.xlsx"):
             return "cobranzas"

@@ -5,7 +5,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, UploadFile, File
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import String, cast, func, or_, select
 from openpyxl import Workbook
 from backend.app.core.db import get_db
 from backend.app.core.seguridad import require_roles
@@ -18,7 +18,9 @@ from backend.app.core.almacenamiento import guardar_archivo
 from backend.app.core.config import settings
 from backend.app.core.tiempo import ahora
 from backend.app.core.reparto import autorizar_parada
-from backend.app.models import Cobro, ParadaRuta, Pedido, Cliente
+from backend.app.models import Cobro, ParadaRuta, Pedido, Cliente, Ruta, Planificacion, Usuario, Vehiculo
+from backend.app.modules.cobranzas.saldos import validar_importe
+from backend.app.modules.cobranzas.liquidaciones import validar_caja_abierta
 
 router = APIRouter(prefix="/cobros", tags=["Cobranzas"])
 lectura = require_roles(
@@ -50,6 +52,8 @@ def datos(req):
         raise ErrorReglaNegocio(
             "OPERACION_REQUERIDA", "Indique el número de operación."
         )
+    if (req.numero_operacion or "").upper().strip().startswith("SIPRD-DEMO-"):
+        raise ErrorReglaNegocio("OPERACION_INVALIDA", "La referencia está reservada.")
     return medio
 
 
@@ -88,10 +92,14 @@ async def registrar(req: Registrar, db=Depends(get_db), usuario=Depends(escritur
         raise ErrorReglaNegocio(
             "PEDIDO_CERRADO", "El pedido ya tiene cierre financiero."
         )
+    medio = datos(req)
+    if medio == "EFECTIVO":
+        await validar_caja_abierta(db, s, int(usuario["sub"]))
+    await validar_importe(db, p, req.monto)
     c = Cobro(
         id_parada=s.id_parada,
         monto=req.monto,
-        medio_pago=datos(req),
+        medio_pago=medio,
         numero_operacion=req.numero_operacion,
         estado="PENDIENTE",
         id_usuario_registro=int(usuario["sub"]),
@@ -120,10 +128,14 @@ async def corregir(
     c = await db.get(Cobro, cobro_id)
     if not c:
         raise ErrorNoEncontrado("Cobro", cobro_id)
-    await editable(db, c, usuario)
+    p = await editable(db, c, usuario)
+    medio = datos(req)
+    if "EFECTIVO" in (c.medio_pago, medio):
+        await validar_caja_abierta(db, await db.get(ParadaRuta, c.id_parada), c.id_usuario_registro)
+    await validar_importe(db, p, req.monto, c.id_cobro)
     previo = {"monto": str(c.monto), "estado": c.estado, "observacion": c.observacion}
     c.monto = req.monto
-    c.medio_pago = datos(req)
+    c.medio_pago = medio
     c.numero_operacion = req.numero_operacion
     c.estado = "PENDIENTE"
     c.id_usuario_validador = None
@@ -152,6 +164,8 @@ async def comprobante(
     if not c:
         raise ErrorNoEncontrado("Cobro", cobro_id)
     await editable(db, c, usuario)
+    if c.medio_pago == "EFECTIVO":
+        await validar_caja_abierta(db, await db.get(ParadaRuta, c.id_parada), c.id_usuario_registro)
     info = await guardar_archivo(archivo, "comprobantes")
     c.url_comprobante = info["clave_archivo"]
     c.nombre_archivo = info["nombre_original"]
@@ -177,21 +191,38 @@ async def listar(
     fecha: date | None = None,
     db=Depends(get_db),
     usuario=Depends(lectura),
+    medio: str | None = None,
+    busca: str | None = None,
 ):
     q = (
-        select(Cobro, ParadaRuta, Pedido, Cliente)
+        select(Cobro, ParadaRuta, Pedido, Cliente, Usuario, Vehiculo)
         .join(ParadaRuta, Cobro.id_parada == ParadaRuta.id_parada)
         .join(Pedido, ParadaRuta.id_pedido == Pedido.id_pedido)
         .join(Cliente, Pedido.id_cliente == Cliente.id_cliente)
+        .join(Ruta, Ruta.id_ruta == ParadaRuta.id_ruta)
+        .join(Planificacion, Planificacion.id_planificacion == Ruta.id_planificacion)
+        .join(Usuario, Usuario.id_usuario == Cobro.id_usuario_registro)
+        .join(Vehiculo, Vehiculo.id_vehiculo == Ruta.id_vehiculo)
     )
     if estado:
         q = q.where(Cobro.estado == estado.upper())
     if fecha:
-        q = q.where(Pedido.fecha_programada == fecha)
+        q = q.where(Planificacion.fecha_operacion == fecha)
+    if medio:
+        q = q.where(Cobro.medio_pago == medio.upper())
+    if busca and busca.strip():
+        termino = busca.strip().lower()
+        q = q.where(or_(
+            func.lower(Cliente.razon_social).contains(termino, autoescape=True),
+            func.lower(Pedido.codigo_externo).contains(termino, autoescape=True),
+            cast(Pedido.id_pedido, String).contains(termino, autoescape=True),
+            func.lower(func.concat(Usuario.nombres, " ", Usuario.apellidos)).contains(termino, autoescape=True),
+            func.lower(Vehiculo.placa).contains(termino, autoescape=True),
+        ))
     if usuario["rol"] == "REPARTIDOR":
         q = q.where(
             Cobro.id_usuario_registro == int(usuario["sub"]),
-            Pedido.fecha_programada == usuario["fecha_reparto"],
+            Planificacion.fecha_operacion == usuario["fecha_reparto"],
         )
     filas = (await db.execute(q.order_by(Cobro.id_cobro.desc()))).all()
     return [
@@ -201,10 +232,13 @@ async def listar(
             "pedido_id": p.id_pedido,
             "pedido": p.codigo_externo,
             "cliente": cl.razon_social,
+            "conductor": f"{u.nombres} {u.apellidos}",
+            "ruta": v.placa,
             "monto": float(c.monto),
             "importe_pedido": float(p.importe_total),
             "medio_pago": c.medio_pago,
             "numero_operacion": c.numero_operacion,
+            "simulado": (c.numero_operacion or "").startswith("SIPRD-DEMO-"),
             "estado": c.estado,
             "observacion": c.observacion,
             "tiene_comprobante": bool(c.url_comprobante),
@@ -212,7 +246,7 @@ async def listar(
             "entregado": p.estado == "ENTREGADO",
             "cierre_financiero": p.cierre_financiero,
         }
-        for c, s, p, cl in filas
+        for c, s, p, cl, u, v in filas
     ]
 
 
@@ -221,8 +255,11 @@ async def exportar(
     fecha: date | None = None,
     db=Depends(get_db),
     usuario=Depends(require_roles(["TESORERIA", "JEFE"])),
+    estado: str | None = None,
+    medio: str | None = None,
+    busca: str | None = None,
 ):
-    filas = await listar(fecha=fecha, db=db, usuario=usuario)
+    filas = await listar(fecha=fecha, db=db, usuario=usuario, estado=estado, medio=medio, busca=busca)
     w = Workbook()
     sh = w.active
     sh.title = "Arqueo"
@@ -237,6 +274,8 @@ async def exportar(
             "Monto registrado",
             "Estado",
             "Observación",
+            "Responsable",
+            "Vehículo",
         ]
     )
     for c in filas:
@@ -251,6 +290,8 @@ async def exportar(
             c["monto"],
             c["estado"],
             c["observacion"] or "",
+            c["conductor"],
+            c["ruta"],
         ]
         sh.append(vals)
         for cell in sh[sh.max_row]:
@@ -258,8 +299,17 @@ async def exportar(
                 cell.data_type = "s"
     sh.freeze_panes = "A2"
     sh.auto_filter.ref = sh.dimensions
-    for col in "ABCDEFGHI":
+    for col in "ABCDEFGHIJK":
         sh.column_dimensions[col].width = 23
+    resumen = w.create_sheet("Totales")
+    resumen.append(["Medio", "Monto registrado (PEN)"])
+    totales = {}
+    for c in filas:
+        medio = c["medio_pago"]
+        totales[medio] = totales.get(medio, Decimal(0)) + Decimal(str(c["monto"]))
+    for medio, total in sorted(totales.items()):
+        resumen.append([medio, total])
+    resumen.append(["Total general", sum(totales.values(), Decimal(0))])
     buf = BytesIO()
     w.save(buf)
     buf.seek(0)
@@ -303,6 +353,10 @@ async def contrastar(
         .one()
     )
     await db.refresh(c)
+    if (c.numero_operacion or "").startswith("SIPRD-DEMO-"):
+        raise ErrorReglaNegocio("COBRO_SIMULADO", "El resultado del pago simulado no se modifica manualmente.")
+    if c.medio_pago == "EFECTIVO":
+        await validar_caja_abierta(db, s, c.id_usuario_registro)
     if p.cierre_financiero:
         raise ErrorReglaNegocio("PEDIDO_CERRADO", "El pedido ya está cerrado.")
     resultado = req.resultado.upper()
@@ -318,6 +372,8 @@ async def contrastar(
         raise ErrorReglaNegocio(
             "COMPROBANTE_REQUERIDO", "Falta el comprobante del pago."
         )
+    if resultado == "CONFORME":
+        await validar_importe(db, p, c.monto, c.id_cobro)
     antes = {"estado": c.estado, "observacion": c.observacion}
     c.estado = resultado
     c.observacion = req.observacion if resultado == "OBSERVADO" else None

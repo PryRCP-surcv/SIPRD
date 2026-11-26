@@ -21,10 +21,16 @@ def intervalos(reglas, fecha, inicio=450, fin=1050):
             else r.dia_semana in (None, fecha.isoweekday())
         )
     ]
-    positivos = [r for r in reglas if r.activo and r.tipo_restriccion == "RECIBE"]
-    if positivos and not any(r.tipo_restriccion == "RECIBE" for r in aplican):
+    por_fecha = [r for r in aplican if r.fecha_especifica == fecha]
+    ventanas_especificas = [
+        r for r in por_fecha if r.tipo_restriccion in ("RECIBE", "VENTANA_HORARIA")
+    ]
+    positivos = [
+        r for r in reglas if r.activo and not r.fecha_especifica and r.tipo_restriccion == "RECIBE"
+    ]
+    if positivos and not ventanas_especificas and not any(r.tipo_restriccion == "RECIBE" for r in aplican):
         return []
-    ventanas = [
+    ventanas = ventanas_especificas or [
         r for r in aplican if r.tipo_restriccion in ("RECIBE", "VENTANA_HORARIA")
     ]
     slots = (

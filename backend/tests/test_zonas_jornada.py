@@ -121,5 +121,16 @@ class JornadaTest(unittest.TestCase):
         self.assertEqual([], intervalos([r("NO_RECIBE", dia=6)], date(2026, 10, 10)))
 
 
+    def test_fecha_especifica_no_amplia_ventana_ni_restringe_otros_dias(self):
+        comun = dict(tipo_restriccion="RECIBE", activo=True, dia_semana=None)
+        fecha = date(2026, 11, 26)
+        especifica = SimpleNamespace(**comun, fecha_especifica=fecha,
+                                     hora_inicio=time(10), hora_fin=time(11))
+        recurrente = SimpleNamespace(**comun, fecha_especifica=None,
+                                     hora_inicio=time(8), hora_fin=time(15))
+        self.assertEqual([[600, 660]], intervalos([recurrente, especifica], fecha))
+        self.assertEqual([[450, 1050]], intervalos([especifica], date(2026, 11, 27)))
+
+
 if __name__ == "__main__":
     unittest.main()

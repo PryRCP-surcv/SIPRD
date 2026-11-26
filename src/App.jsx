@@ -1,4 +1,5 @@
 import { useMemo, useState, useEffect, useRef } from 'react'
+import PortalCliente from './components/PortalCliente'
 import Sidebar       from './components/Sidebar'
 import TopBar        from './components/TopBar'
 import ParamsBar     from './components/ParamsBar'
@@ -131,6 +132,14 @@ function AccesoDenegado() {
 export default function App() {
   const { usuario, puede, puedeAprobar } = useAuth()
   const { log } = useAudit()
+  const [hash, setHash] = useState(window.location.hash)
+  useEffect(() => {
+    const actualizar = () => setHash(window.location.hash)
+    window.addEventListener('hashchange', actualizar)
+    return () => window.removeEventListener('hashchange', actualizar)
+  }, [])
+  const enlace = new URLSearchParams(hash.slice(1)).get('pedido')
+  if (enlace !== null) return <PortalCliente key={enlace} enlace={enlace} />
 
   // Si no hay sesión → pantalla de login
   if (!usuario) return <Login />

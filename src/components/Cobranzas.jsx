@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext'
 import { useAudit } from '../context/AuditContext'
 import { useToast } from '../context/ToastContext'
 import Modal from './common/Modal'
+import LiquidacionEfectivo from './LiquidacionEfectivo'
 
 /**
  * Módulo Cobranzas — Validación de pagos.
@@ -42,6 +43,7 @@ export default function Cobranzas() {
 
   const [cobros, setCobros]         = useState([])
   const [filtro, setFiltro]         = useState('todos')
+  const [medio, setMedio] = useState('')
   const [modalDetalle, setModalDetalle] = useState(null)
   const [modalRechazo, setModalRechazo] = useState(null) // id del cobro a rechazar
   const [motivoRechazo, setMotivoRechazo] = useState('')
@@ -64,16 +66,17 @@ export default function Cobranzas() {
   const filtrados = useMemo(() => {
     return cobros.filter(c => {
       if (filtro !== 'todos' && c.estado !== filtro) return false
+      if (medio && c.medio_pago !== medio) return false
       if (busca) {
         const q = busca.toLowerCase().trim()
         const matchCli = (c.cliente ?? '').toLowerCase().includes(q)
         const matchCon = (c.conductor ?? '').toLowerCase().includes(q)
-        const matchPed = String(c.pedido ?? '').includes(q)
-        return matchCli || matchCon || matchPed
+        const matchPed = String(c.pedido ?? '').toLowerCase().includes(q) || String(c.pedido_id ?? '').includes(q)
+        return matchCli || matchCon || matchPed || String(c.ruta ?? '').toLowerCase().includes(q)
       }
       return true
     })
-  }, [cobros, filtro, busca])
+  }, [cobros, filtro, busca, medio])
 
   // ── Validación con soporte de Deshacer (Heurística #3) ─────────
   const validar = async (id) => {
@@ -91,7 +94,12 @@ export default function Cobranzas() {
     try{await apiFetch(`/cobros/${modalRechazo}/contraste`,{method:'POST',body:JSON.stringify({resultado:'OBSERVADO',observacion:motivoRechazo.trim()})});await operacion.refresh();setModalRechazo(null);setMotivoRechazo('');toast.success('Observación guardada y disponible para el repartidor.')}catch(e){toast.error(e.message)}
   }
   const exportarExcel=async()=>{
-    try{const res=await apiFetch(`/cobros/exportacion.xlsx?fecha=${operacion.fecha}`);const url=URL.createObjectURL(await res.blob());const a=document.createElement('a');a.href=url;a.download=`arqueo_${operacion.fecha}.xlsx`;a.click();URL.revokeObjectURL(url)}catch(e){toast.error(e.message)}
+    const filtros = new URLSearchParams({ fecha: operacion.fecha })
+    const estado = { pendiente: 'PENDIENTE', validado: 'CONFORME', rechazado: 'OBSERVADO' }[filtro]
+    if (estado) filtros.set('estado', estado)
+    if (medio) filtros.set('medio', medio)
+    if (busca.trim()) filtros.set('busca', busca.trim())
+    try{const res=await apiFetch(`/cobros/exportacion.xlsx?${filtros}`);const url=URL.createObjectURL(await res.blob());const a=document.createElement('a');a.href=url;a.download=`arqueo_${operacion.fecha}.xlsx`;a.click();URL.revokeObjectURL(url)}catch(e){toast.error(e.message)}
   }
 
   const exportarCobrosCSV = () => {
@@ -160,7 +168,7 @@ export default function Cobranzas() {
           </div>
 
           {/* Comprobante */}
-          {cobroSeleccionado.tipo !== 'efectivo' && (
+          {cobroSeleccionado.tipo !== 'efectivo' && !cobroSeleccionado.simulado && (
             <div style={{ borderRadius: 8, border: '1px dashed #cbd5e1', padding: '16px', textAlign: 'center', background: '#fbfcfd' }}>
               {cobroSeleccionado.comprobante ? (
                 <div>
@@ -179,6 +187,7 @@ export default function Cobranzas() {
             </div>
           )}
 
+          {cobroSeleccionado.simulado && <p>Pago simulado · {cobroSeleccionado.numero_operacion}</p>}
           {cobroSeleccionado.tipo === 'efectivo' && (
             <div style={{ background: '#f0fdf4', borderRadius: 8, padding: '12px 14px', fontSize: 12, color: '#15803d', border: '1px solid #bbf7d0' }}>
               💵 <strong>Pago en efectivo recibido por el repartidor.</strong> No requiere comprobante bancario. Se concilia contra caja al retorno del vehículo.
@@ -283,6 +292,8 @@ export default function Cobranzas() {
           ))}
         </div>
 
+        <LiquidacionEfectivo key={operacion.fecha} fecha={operacion.fecha} cobros={cobros}
+          onGuardar={operacion.refresh} puedeGuardar={puede('validar_cobros')} />
         {/* Cola de cobros */}
         <div className="card">
           <div className="ch">
@@ -321,6 +332,10 @@ export default function Cobranzas() {
 
           {/* Filtros + búsqueda accesible */}
           <div style={{ padding: '10px 16px', display: 'flex', gap: 10, borderBottom: '1px solid #e6e9ef', flexWrap: 'wrap', alignItems: 'center' }}>
+            <select aria-label="Medio de pago" value={medio} onChange={e => setMedio(e.target.value)}>
+              <option value="">Todos los medios</option>
+              {[...new Set(cobros.map(c => c.medio_pago))].sort().map(m => <option key={m}>{m}</option>)}
+            </select>
             <div className="tabs" style={{ padding: 0, border: 0, marginRight: 4 }}>
               {[['todos', 'Todos'], ['pendiente', 'Pendientes'], ['validado', 'Validados'], ['rechazado', 'Rechazados']].map(([k, l]) => (
                 <button
@@ -401,7 +416,7 @@ export default function Cobranzas() {
                         <span style={{ color: '#94a3b8', fontSize: 11 }}>N/A</span>
                       )}
                     </td>
-                    <td>{chipEstado(c.estado)}</td>
+                    <td>{c.simulado ? <span className="chip c-lo">Pago simulado</span> : chipEstado(c.estado)}</td>
                     <td>
                       <div style={{ display: 'flex', gap: 6, justifyContent: 'center' }}>
                         <button

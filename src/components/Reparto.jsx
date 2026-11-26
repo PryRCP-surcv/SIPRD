@@ -3,6 +3,7 @@ import {apiFetch} from '../api/cliente'
 import {useToast} from '../context/ToastContext'
 import {useAuth} from '../context/AuthContext'
 import Modal from './common/Modal'
+import { EnlaceCliente } from './PortalCliente'
 
 const MEDIOS=['TRANSFERENCIA','YAPE','PLIN','EFECTIVO','DEPOSITO']
 const etiquetaMedio={TRANSFERENCIA:'Transferencia',YAPE:'Yape',PLIN:'Plin',EFECTIVO:'Efectivo',DEPOSITO:'Depósito'}
@@ -26,6 +27,7 @@ export default function Reparto(){
    {rutas.map(r=><div className="reparto-route" key={r.ruta_id}><div className="reparto-route-head"><div><span>Ruta {r.zona||'operativa'}</span><b>{r.vehiculo}</b></div><small>{r.paradas.length} paradas · {r.duracion_min||0} min estimados</small></div><div className="reparto-stops">{r.paradas.map(p=><button className={`reparto-stop estado-${p.estado?.toLowerCase()}`} key={p.id} onClick={()=>abrir(p)}><span className="reparto-seq">{p.secuencia}</span><span className="reparto-stop-main"><b>{p.cliente}</b><i>{p.direccion}</i><small>S/ {p.importe.toFixed(2)} · {p.porcentaje}% confirmado</small></span><span className={`reparto-status ${p.cierre_financiero?'cerrado':p.estado?.toLowerCase()}`}>{p.cierre_financiero?'Cerrado':estadoTexto(p.estado)}</span><span className="reparto-chevron">›</span></button>)}</div></div>)}
    {pedido&&<Modal isOpen title={`Entrega ${pedido.pedido}`} subtitle={`Parada ${pedido.secuencia} · ${pedido.cliente}`} onClose={()=>setPedido(null)} maxWidth={680}>
      <div className="reparto-detail">
+       <EnlaceCliente key={pedido.id} paradaId={pedido.id} />
        <div className="reparto-detail-card"><div className="reparto-section-title"><span>📍</span><div><b>Ubicación de entrega</b><small>{pedido.direccion}</small></div></div><div className="reparto-map-actions"><button onClick={()=>abrirMaps('gps')}>⌾ Abrir GPS</button><button onClick={()=>abrirMaps('ruta')}>⌖ Abrir dirección en Maps</button></div></div>
        <div className="reparto-amount"><span>💳</span><div><small>Monto a cobrar</small><b>S/ {pedido.importe.toFixed(2)}</b></div><i>{pedido.porcentaje}% confirmado</i></div>
        <div className="reparto-detail-card"><div className="reparto-section-title"><span>📦</span><div><b>Evidencia de entrega</b><small>Fotografía de cajas entregadas · {pedido.evidencias} registrada(s)</small></div></div><label className="reparto-file"><input aria-label="Fotografía de entrega" type="file" accept="image/*" capture="environment" disabled={!!pedido.cierre_financiero} onChange={e=>setEvidencia(e.target.files[0])}/><span>{evidencia?evidencia.name:'Tomar o seleccionar fotografía'}</span></label><button className="reparto-secondary" disabled={!evidencia||ocupado} onClick={fotoEntrega}>Guardar evidencia</button></div>

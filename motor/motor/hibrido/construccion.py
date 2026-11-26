@@ -10,6 +10,7 @@ def construir_solucion_inicial(
     mat_dist: List[List[float]],
     mat_tiempo: List[List[float]],
     mapa_indices: Dict[str, int],
+    criterio: str = "distancia",
 ) -> Tuple[List[RutaResultado], List[NoAsignadoResultado]]:
     """
     Heurística de construcción de rutas basada en inserción con balanceo de capacidad y ventanas.
@@ -39,16 +40,23 @@ def construir_solucion_inicial(
             if (peso_acum + p.peso_kg <= v.capacidad_peso_kg) and (
                 vol_acum + p.volumen_m3 <= v.capacidad_volumen_m3
             ):
-                # Probar si la inserción genera una ruta factible
-                candidatos = pedidos_ruta + [p]
-                indices = [mapa_indices[x.id] for x in candidatos]
-                eval_res = evaluar_ruta(
-                    deposito, candidatos, v, mat_dist, mat_tiempo, 0, indices
-                )
+                # Probar todas las posiciones: añadir al final puede rechazar
+                # una entrega que sí cabe antes de una espera o ventana.
+                objetivo = "duracion_total_min" if criterio == "jornada" else "distancia_total_km"
+                mejor = None
+                for posicion in range(len(pedidos_ruta) + 1):
+                    candidatos = pedidos_ruta[:posicion] + [p] + pedidos_ruta[posicion:]
+                    indices = [mapa_indices[x.id] for x in candidatos]
+                    evaluacion = evaluar_ruta(
+                        deposito, candidatos, v, mat_dist, mat_tiempo, 0, indices
+                    )
+                    if not evaluacion["infracciones"]:
+                        clave = (evaluacion[objetivo], posicion)
+                        if mejor is None or clave < mejor[0]:
+                            mejor = (clave, candidatos)
 
-                # Si no viola jornada ni ventana estricta, aceptar
-                if len(eval_res["infracciones"]) == 0:
-                    pedidos_ruta.append(p)
+                if mejor is not None:
+                    pedidos_ruta = mejor[1]
                     peso_acum += p.peso_kg
                     vol_acum += p.volumen_m3
                     pedidos_pendientes.pop(i)
@@ -82,8 +90,8 @@ def construir_solucion_inicial(
         no_asignados.append(
             NoAsignadoResultado(
                 pedido_id=p.id,
-                codigo="CAPACIDAD_FLOTA_INSUFICIENTE",
-                motivo=f"No hay vehículos disponibles con capacidad suficiente para este pedido ({p.peso_kg} kg / {p.volumen_m3} m³).",
+                codigo="SIN_INSERCION_FACTIBLE",
+                motivo="No se encontró una inserción que respete simultáneamente la capacidad, los horarios de recepción y la jornada en la propuesta generada.",
             )
         )
 
