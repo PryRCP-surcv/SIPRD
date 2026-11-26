@@ -8,6 +8,7 @@ export const fechaLima=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'America/Li
 export function OperacionProvider({children}) {
   const {usuario,puede}=useAuth()
   const [fecha,setFecha]=useState(fechaLima)
+  const [fechaCargada,setFechaCargada]=useState(null)
   const [vehiculos,setVehiculos]=useState([]),[pedidos,setPedidos]=useState([])
   const [plan,setPlan]=useState(null),[historicas,setHistoricas]=useState([]),[cobros,setCobros]=useState([])
   const [online,setOnline]=useState(false),[error,setError]=useState(''),[cargando,setCargando]=useState(false)
@@ -41,6 +42,7 @@ export function OperacionProvider({children}) {
       if(key==='cobros')setCobros(r.value.map(cobroUI))
     })
     setError([...new Set(errors)].join(' · '));setCargando(false)
+    if (result.every(r => r.status === 'fulfilled')) setFechaCargada(fecha)
   },[usuario,puede,fecha])
   useEffect(()=>{setPlan(null);setHistoricas([]);setCobros([]);setPedidos([]);refresh();const t=setInterval(refresh,30000);return()=>{clearInterval(t);serial.current++}},[refresh])
   useEffect(()=>{
@@ -58,6 +60,6 @@ export function OperacionProvider({children}) {
     if(!r){r={...antigua,paradas:[]};resumen.push(r)}
     for(const s of antigua.paradas)if(!vistos.has(String(s.pedido_id))){r.paradas.push(s);vistos.add(String(s.pedido_id))}
   }
-  return <Context.Provider value={{fecha,setFecha,vehiculos,pedidos,plan,setPlan,rutas,rutasResumen:resumen,cobros,refresh,online,error,cargando}}>{children}</Context.Provider>
+  return <Context.Provider value={{fecha,fechaCargada,setFecha,vehiculos,pedidos,plan,setPlan,rutas,rutasResumen:resumen,cobros,refresh,online,error,cargando}}>{children}</Context.Provider>
 }
 export const useOperacion=()=>useContext(Context)

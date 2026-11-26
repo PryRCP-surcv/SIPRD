@@ -69,7 +69,7 @@ def hora_eta(fecha, hora):
     return datetime.combine(fecha, time.fromisoformat(hora), LIMA)
 
 
-async def construir(req, db):
+async def preparar_instancia(req, db):
     vs = (
         (
             await db.execute(
@@ -87,6 +87,8 @@ async def construir(req, db):
         raise ErrorReglaNegocio(
             "VEHICULO_INVALIDO", "Seleccione vehículos activos y disponibles."
         )
+    por_id = {v.id_vehiculo: v for v in vs}
+    vs = [por_id[id_] for id_ in dict.fromkeys(req.vehiculo_ids)]
     q = (
         select(Pedido, Cliente)
         .join(Cliente, Pedido.id_cliente == Cliente.id_cliente)
@@ -175,11 +177,42 @@ async def construir(req, db):
         matriz_distancias=dist,
         matriz_tiempos=tiempos,
     )
-    sol = await run_in_threadpool(optimizar_zonas, instancia)
+    return instancia, descartados, fuente, filas
+
+
+def resolver(instancia, descartados, fuente):
+    sol = optimizar_zonas(instancia)
     resultado = sol.model_dump()
     resultado["no_asignados"] += descartados
     resultado["fuente_distancias"] = fuente
-    return resultado, filas
+    return resultado
+
+
+async def construir(req, db):
+    instancia, descartados, fuente, filas = await preparar_instancia(req, db)
+    return await run_in_threadpool(resolver, instancia, descartados, fuente), filas
+
+
+def comparar_flotas(instancia, descartados, fuente, limite_minutos):
+    escenarios = []
+    recomendado = None
+    for n in range(1, len(instancia.vehiculos) + 1):
+        flota = instancia.model_copy(update={"vehiculos": instancia.vehiculos[:n]})
+        sol = resolver(flota, descartados, fuente)
+        jornada_max = max((ruta["duracion_total_min"] for ruta in sol["rutas"]), default=0)
+        viable = bool(sol["rutas"]) and not sol["no_asignados"] and jornada_max <= limite_minutos
+        escenarios.append({"n": n, "viable": viable, **sol})
+        if viable and recomendado is None:
+            recomendado = n
+    return {"recomendado": recomendado, "escenarios": escenarios}
+
+
+@router.post("/comparar-flota")
+async def comparar(req: Crear, db=Depends(get_db), usuario=Depends(auth)):
+    instancia, descartados, fuente, _ = await preparar_instancia(req, db)
+    return await run_in_threadpool(
+        comparar_flotas, instancia, descartados, fuente, req.parametros.jornada_horas * 60
+    )
 
 
 @router.post("/previsualizar")
@@ -330,6 +363,7 @@ async def detalle(plan_id, db):
         )
     return {
         "id": plan.id_planificacion,
+        "id_planificacion_anterior": plan.id_planificacion_anterior,
         "fecha": plan.fecha_operacion,
         "numero_version": plan.numero_version,
         "estado": plan.estado,

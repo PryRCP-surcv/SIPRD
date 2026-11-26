@@ -18,7 +18,13 @@ parser.add_argument(
     type=date.fromisoformat,
     default=datetime.now(ZoneInfo("America/Lima")).date(),
 )
+parser.add_argument(
+    "--carga", nargs=4, type=int, metavar=("NORTE", "SUR", "ESTE", "CENTRO"),
+    default=[24, 24, 12, 12], help="Cantidad de pedidos por zona.",
+)
 args = parser.parse_args()
+if any(not 0 <= n <= maximo for n, maximo in zip(args.carga, (24, 24, 12, 12))):
+    parser.error("Use entre 0 y 24 para norte/sur y entre 0 y 12 para este/centro.")
 url = os.getenv("DATABASE_URL_DIRECT") or os.getenv("DATABASE_URL")
 if not url:
     raise SystemExit("Configure DATABASE_URL")
@@ -56,7 +62,7 @@ with psycopg.connect(url) as con:
             ('CENTRO', 12, -12.046, -77.074, 0.018, 0.018),
         ]
         from motor.motor.zonas import zona_de
-        for zona, n, lat, lon, dy, dx in zonas:
+        for (zona, _, lat, lon, dy, dx), n in zip(zonas, args.carga):
             for i in range(n):
                 code = f'DEMO6-{zona}-{i + 1:02}'
                 # Puntos separados entre aproximadamente 1.4 y 2.6 km,
@@ -95,7 +101,7 @@ with psycopg.connect(url) as con:
                         x,
                     ),
                 )
-        for zona,n,lat,lon,dy,dx in zonas:
+        for (zona, _, lat, lon, dy, dx), n in zip(zonas, args.carga):
             for i in range(n):
                 code=f'DEMO6-{zona}-{i+1:02}'
                 y=round(lat-(i//4)*dy+(i%2)*0.001,6)

@@ -1,27 +1,17 @@
 import { hhmm } from '../lib/planner'
 
-/**
- * Tanteo de flota.
- *
- * Reproduce lo que hoy hace el asistente de distribución a mano: probar con 3,
- * 4, 5 o 6 vehículos y comparar la jornada resultante antes de decidir cuántos
- * carros salen. La diferencia es que aquí ve los escenarios lado a lado en vez
- * de recordar el anterior.
- */
 export default function FleetTrial({
   escenarios,
   seleccion,
   onSeleccionar,
-  onAgregar,
+  recomendado,
+  error,
   onRecalcular,
   calculando,
   jornadaMax,
-  totalPedidos,
 }) {
   const limite = (jornadaMax || 8) * 60
   const peor = escenarios.length ? Math.max(1, ...escenarios.map((e) => e.jornadaMax || 0)) : 1
-  const viables = escenarios.filter((e) => (e.sinAsignar?.length ?? 0) === 0 && e.jornadaMax <= limite)
-  const recomendado = viables.length ? viables.reduce((a, b) => (a.n <= b.n ? a : b)).n : null
   const actual = escenarios.find((e) => e.n === seleccion) || escenarios[0]
 
   return (
@@ -30,21 +20,23 @@ export default function FleetTrial({
         <div>
           <h3>Tanteo de flota</h3>
           <p>
-            Elige cuántos vehículos salen hoy. El sistema reparte los {totalPedidos} pedidos y calcula
-            la jornada de cada camión para que puedas comparar antes de decidir.
+            Compara la flota para la fecha seleccionada. Cada escenario muestra la jornada más larga
+            y cuántos pedidos quedan sin asignar.
           </p>
         </div>
         <div className="btns">
-          <button className="btn ghost" onClick={onAgregar}>Añadir escenario</button>
           <button className="btn blue" onClick={onRecalcular} disabled={calculando}>
             {calculando ? 'Optimizando…' : '▶ Recalcular'}
           </button>
         </div>
       </div>
+      {error && <p role="status" style={{padding: '8px 16px'}}>{error}</p>}
+      {escenarios.length > 0 && recomendado === null &&
+        <p role="status" style={{padding: '8px 16px'}}>Ninguna combinación probada cubre todos los pedidos dentro de la jornada.</p>}
 
       <div className="scn">
         {escenarios.map((e) => {
-          const excede = e.jornadaMax > limite || e.sinAsignar.length > 0
+          const excede = !e.viable || e.jornadaMax > limite
           const clases = ['s', e.n === seleccion ? 'on' : '', excede ? 'bad' : ''].filter(Boolean).join(' ')
           const color = excede ? '#DC2626' : e.n === recomendado ? '#3B82F6' : '#16A34A'
           return (
@@ -71,14 +63,6 @@ export default function FleetTrial({
           )
         })}
 
-        <button className="s" style={{ opacity: 0.5, display: 'grid', placeItems: 'center' }} onClick={onAgregar}>
-          <div style={{ textAlign: 'center', color: '#8792A8' }}>
-            <div style={{ fontSize: 20, lineHeight: 1 }}>＋</div>
-            <div style={{ fontSize: 10.5, marginTop: 5 }}>
-              Probar con {(escenarios.length ? Math.max(...escenarios.map((e) => e.n)) : 3) + 1}
-            </div>
-          </div>
-        </button>
       </div>
 
       {actual && (

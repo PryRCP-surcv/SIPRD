@@ -19,7 +19,9 @@ export function EnlaceCliente({ paradaId }) {
     setEstado('')
     try {
       const { enlace, vence } = await apiFetch('/portal/enlaces/' + paradaId, { method: 'POST' })
-      const url = location.origin + location.pathname + '#pedido=' + encodeURIComponent(enlace)
+      const destino = new URL(import.meta.env.VITE_PORTAL_PUBLICO_URL || location.pathname, location.origin)
+      destino.hash = new URLSearchParams({ pedido: enlace }).toString()
+      const url = destino.href
       setDatos({ url, vence, qr: await QRCode.toDataURL(url, { width: 256, margin: 2 }) })
     } catch (error) {
       setEstado(error.message)
@@ -115,6 +117,7 @@ export default function PortalCliente({ enlace }) {
           </>}
           <dt>Saldo pendiente de confirmación</dt><dd>{soles(pedido.saldo)}</dd>
         </dl>
+        {pedido.saldo > 0 && !pedido.pago_demo && <p>Pago digital pendiente de habilitación.</p>}
         {pedido.pago_demo && <p>Modo demostración. No procesa dinero.</p>}
         {pedido.puede_pagar && <button className="reparto-primary" disabled={ocupado} onClick={simular}>Simular pago</button>}
         {pago && <p role="status">{pago}</p>}

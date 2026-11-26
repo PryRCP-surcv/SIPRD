@@ -159,7 +159,6 @@ function AppInterna({ usuario, puede, puedeAprobar, log }) {
   const [criterio, setCriterio]     = useState('jornada')
   const [turno, setTurno]           = useState('dia')
   const [jornadaMax, setJornadaMax] = useState(8)
-  const [tamanos, setTamanos]       = useState([3, 4, 5, 6])
   const [seleccion, setSeleccion]   = useState(6)
   const [calculando, setCalculando] = useState(false)
   const [helpOpen, setHelpOpen]     = useState(false)
@@ -207,32 +206,50 @@ function AppInterna({ usuario, puede, puedeAprobar, log }) {
   const planificables=pedidos.filter(p=>p.estado==='PENDIENTE')
   const reprogramados=[]
   const [escenarios,setEscenarios]=useState([])
+  const [recomendado,setRecomendado]=useState(null)
+  const [errorFlota,setErrorFlota]=useState('')
   const [planGuardado,setPlanGuardado]=useState(null)
   const vacio=planUI({rutas:[]},[],[],seleccion)
-  const plan=planGuardado ? planUI(planGuardado,vehiculos,pedidos,seleccion) : escenarios.find(e=>e.n===seleccion) || (operacion.plan ? planUI(operacion.plan,vehiculos,pedidos) : vacio)
+  const guardadoActual=planGuardado?.fecha===fecha ? planGuardado : null
+  const plan=guardadoActual ? planUI(guardadoActual,vehiculos,pedidos,seleccion) : escenarios.find(e=>e.n===seleccion) || (operacion.plan?.fecha===fecha ? planUI(operacion.plan,vehiculos,pedidos) : vacio)
   const recalcTimerRef=useRef(0)
+  const vehiculoIds=flota.map(v=>v.id)
+  const replanificarId=operacion.plan?.estado==='CONFIRMADA'
+    ? operacion.plan.id : operacion.plan?.id_planificacion_anterior ?? undefined
+  const parametros={inicio_jornada:turno==='dia'?'07:30':'15:00',jornada_horas:jornadaMax,criterio}
+  const llaveFlota=vehiculoIds.join(',')
+  const llavePedidos=planificables.filter(p=>p.habilitado_despacho!==false).map(p=>p.id).join(',')
   const recalcular=async()=>{
-    if(!flota.length){toast.warning('Seleccione vehículos disponibles.');return}
     const peticion=++recalcTimerRef.current
-    setCalculando(true);setPlanGuardado(null);setAprobacion(null)
+    setEscenarios([]);setRecomendado(null);setErrorFlota('')
+    setPlanGuardado(null);setAprobacion(null)
+    if (operacion.fechaCargada!==fecha || !vehiculoIds.length || (!llavePedidos && !replanificarId)) {
+      setCalculando(false)
+      return
+    }
+    setCalculando(true)
     try{
-      const resultados=[]
-      for(const n of tamanos.filter(n=>n<=flota.length)){
-        const sol=await apiFetch('/planificaciones/previsualizar',{method:'POST',body:JSON.stringify({fecha,vehiculo_ids:flota.slice(0,n).map(v=>v.id),parametros:{inicio_jornada:turno==='dia'?'07:30':'15:00',jornada_horas:jornadaMax,criterio},replanificar_id:operacion.plan?.estado==='CONFIRMADA'?operacion.plan.id:undefined})})
-        resultados.push(planUI(sol,vehiculos,pedidos,n))
-      }
+      const comparacion=await apiFetch('/planificaciones/comparar-flota',{
+        method:'POST',body:JSON.stringify({fecha,vehiculo_ids:vehiculoIds,parametros,replanificar_id:replanificarId}),
+      })
       if(peticion!==recalcTimerRef.current)return
+      const resultados=comparacion.escenarios.map(sol=>planUI(sol,vehiculos,pedidos,sol.n))
       setEscenarios(resultados)
-      if(resultados.length && !resultados.some(x=>x.n===seleccion))setSeleccion(resultados[0].n)
-      toast.success('Escenarios calculados con los pedidos de la base de datos.')
-    }catch(e){if(peticion===recalcTimerRef.current)toast.error(e.message)}finally{if(peticion===recalcTimerRef.current)setCalculando(false)}
+      setRecomendado(comparacion.recomendado)
+      setSeleccion(comparacion.recomendado ?? resultados.at(-1).n)
+    }catch(e){if(peticion===recalcTimerRef.current)setErrorFlota(e.message)}finally{if(peticion===recalcTimerRef.current)setCalculando(false)}
   }
-  useEffect(()=>{setEscenarios([]);setPlanGuardado(null);setAprobacion(null)},[fecha,criterio,turno,jornadaMax])
-  useEffect(()=>{if(modulo==='algoritmo'&&flota.length&&(planificables.length || operacion.plan?.estado==='CONFIRMADA'))recalcular()},[modulo,fecha,vehiculos.length,criterio,turno,jornadaMax])
+  useEffect(()=>{
+    if(modulo==='algoritmo' && !selector && guardadoActual?.estado!=='CONFIRMADA')recalcular()
+    return ()=>{recalcTimerRef.current++}
+  },[modulo,fecha,operacion.fechaCargada,llaveFlota,llavePedidos,replanificarId,criterio,turno,jornadaMax,selector])
   const guardarPropuesta=async()=>{
-    if(planGuardado)return planGuardado
+    if(planGuardado?.fecha===fecha)return planGuardado
     if(!escenarios.length && operacion.plan && operacion.plan.rutas.length===seleccion && (operacion.plan.parametros?.criterio || 'jornada')===criterio && (operacion.plan.parametros?.jornada_horas || 8)===jornadaMax && (operacion.plan.parametros?.inicio_jornada || '07:30').slice(0,5)===(turno==='dia'?'07:30':'15:00'))return operacion.plan
-    const raw=await apiFetch('/planificaciones',{method:'POST',body:JSON.stringify({fecha,vehiculo_ids:flota.slice(0,seleccion).map(v=>v.id),parametros:{inicio_jornada:turno==='dia'?'07:30':'15:00',jornada_horas:jornadaMax,criterio},replanificar_id:operacion.plan?.estado==='CONFIRMADA'?operacion.plan.id:undefined})})
+    if (operacion.fechaCargada!==fecha || calculando || !escenarios.some(e=>e.n===seleccion && e.rutas.length)) {
+      throw new Error('Calcula y selecciona un escenario con rutas antes de guardar.')
+    }
+    const raw=await apiFetch('/planificaciones',{method:'POST',body:JSON.stringify({fecha,vehiculo_ids:vehiculoIds.slice(0,seleccion),parametros,replanificar_id:replanificarId})})
     setPlanGuardado(raw);setPlan(raw);return raw
   }
 
@@ -254,23 +271,14 @@ function AppInterna({ usuario, puede, puedeAprobar, log }) {
 
   const descartarPlan = () => {
     setAprobacion(null)
-    setSeleccion(6)
+    setPlanGuardado(null)
+    setSeleccion(recomendado ?? escenarios.at(-1)?.n ?? 1)
     log(usuario, 'Algoritmo', 'Descartó plan de ruteo', 'Se restableció el escenario a la configuración estándar de 5 vehículos')
     toast.info('Plan descartado. Escenario restablecido a valores por defecto.')
   }
 
   const guardarBorrador = async () => {
     try{await guardarPropuesta();toast.success('Propuesta guardada en la base de datos.');await refresh()}catch(e){toast.error(e.message)}
-  }
-
-  const agregarEscenario = () => {
-    const siguiente = Math.max(...tamanos) + 1
-    if (siguiente > flota.length) {
-      toast.warning(`No hay más vehículos configurados (máximo ${flota.length}).`)
-      return
-    }
-    setTamanos([...tamanos, siguiente])
-    toast.info(`Añadido escenario con ${siguiente} vehículos.`)
   }
 
   // RF-09: confirmar aprobación y persistir en backend
@@ -290,7 +298,7 @@ function AppInterna({ usuario, puede, puedeAprobar, log }) {
   return (
     <div className={puede('reparto') ? 'app app-reparto' : 'app'}>
       {/* Centro de Ayuda y Heurísticas (Heurística #10) */}
-      {selector && <Modal isOpen title="Seleccionar vehículos" onClose={()=>setSelector(false)}><div className="tw">{disponibles.map(v=><label key={v.id} style={{display:'block',padding:8}}><input type="checkbox" checked={flota.some(x=>x.id===v.id)} onChange={e=>setElegidos(e.target.checked?[...flota.map(x=>x.id),v.id]:flota.filter(x=>x.id!==v.id).map(x=>x.id))}/> {v.placa} · {v.capacidad_kg} kg · {v.capacidad_m3} m³</label>)}</div><button className="btn blue" onClick={()=>{setSelector(false);recalcular()}}>Aplicar y recalcular</button></Modal>}
+      {selector && <Modal isOpen title="Seleccionar vehículos" onClose={()=>setSelector(false)}><div className="tw">{disponibles.map(v=><label key={v.id} style={{display:'block',padding:8}}><input type="checkbox" checked={flota.some(x=>x.id===v.id)} onChange={e=>setElegidos(e.target.checked?[...flota.map(x=>x.id),v.id]:flota.filter(x=>x.id!==v.id).map(x=>x.id))}/> {v.placa} · {v.capacidad_kg} kg · {v.capacidad_m3} m³</label>)}</div><button className="btn blue" onClick={()=>setSelector(false)}>Aplicar y recalcular</button></Modal>}
       <HelpDrawer isOpen={helpOpen} onClose={() => setHelpOpen(false)} />
 
       {/* Modal de aprobación */}
@@ -327,11 +335,12 @@ function AppInterna({ usuario, puede, puedeAprobar, log }) {
               escenarios={escenarios}
               seleccion={seleccion}
               onSeleccionar={n=>{setSeleccion(n);setPlanGuardado(null);setAprobacion(null)}}
-              onAgregar={agregarEscenario}
+              recomendado={recomendado}
+              error={errorFlota || (operacion.fechaCargada===fecha && !calculando && !escenarios.length
+                ? (!flota.length ? 'Selecciona al menos un vehículo disponible.' : 'No hay pedidos pendientes para esta fecha.') : '')}
               onRecalcular={recalcular}
               calculando={calculando}
               jornadaMax={jornadaMax}
-              totalPedidos={plan.rutas.reduce((n,r)=>n+r.pedidos.length,0)+plan.sinAsignar.length}
             />
 
             <div className="split">
